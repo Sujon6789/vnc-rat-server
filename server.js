@@ -13,9 +13,12 @@ const PORT = process.env.PORT || 8080;
 const victims = new Map();
 const panels = new Set();
 
-// Serve panel.html
+// 🔥 Serve static files from 'public' folder
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 🔥 Serve panel.html from 'public' folder
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'panel.html'));
+    res.sendFile(path.join(__dirname, 'public', 'panel.html'));
 });
 
 // WebSocket Connection
